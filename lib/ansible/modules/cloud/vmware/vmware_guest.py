@@ -94,8 +94,18 @@ options:
     - Manage some VM hardware attributes.
     - 'Valid attributes are:'
     - ' - C(memory_mb) (integer): Amount of memory in MB.'
-    - ' - C(num_cpus) (integer): Number of CPUs.'
     - ' - C(scsi) (string): Valid values are C(buslogic), C(lsilogic), C(lsilogicsas) and C(paravirtual) (default).'
+  cpu:
+    description:
+    - Configure total number of CPU attached to machine.
+    - This should be a multiple of cpu_cores_per_socket parameter.
+    default: 1
+    version_added: "2.4"
+  cpu_cores_per_socket:
+    description:
+    - Configure number of CPU cores present on each CPU socket.
+    default: 1
+    version_added: "2.4"
   guest_id:
     description:
     - Set the guest ID (Debian, RHEL, Windows...).
@@ -217,8 +227,9 @@ EXAMPLES = r'''
       datastore: g73_datastore
     hardware:
       memory_mb: 512
-      num_cpus: 1
       scsi: paravirtual
+    cpu: 2
+    cpu_cores_per_socket: 2
     networks:
     - name: VM Network
       mac: aa:bb:dd:aa:00:14
@@ -278,8 +289,9 @@ EXAMPLES = r'''
       datastore: g73_datastore
     hardware:
       memory_mb: 512
-      num_cpus: 1
       scsi: lsilogic
+    cpu: 6
+    cpu_cores_per_socket: 3
   delegate_to: localhost
   register: deploy
 
@@ -638,16 +650,19 @@ class PyVmomiHelper(object):
             self.configspec.guestId = self.params['guest_id']
 
     def configure_cpu_and_memory(self, vm_obj, vm_creation=False):
-        # set cpu/memory/etc
-        if 'hardware' in self.params:
-            if 'num_cpus' in self.params['hardware']:
-                self.configspec.numCPUs = int(self.params['hardware']['num_cpus'])
-                if vm_obj is None or self.configspec.numCPUs != vm_obj.config.hardware.numCPU:
-                    self.change_detected = True
-            # num_cpu is mandatory for VM creation
-            elif vm_creation and not self.params['template']:
-                self.module.fail_json(msg="hardware.num_cpus attribute is mandatory for VM creation")
+        if int(self.params['cpu']) % int(self.params['cpu_cores_per_socket']) != 0:
+            self.module.fail_json(msg="'cpu' parameter should be a multiple of 'cpu_cores_per_socket'")
 
+        if vm_obj is None or int(self.params['cpu']) != vm_obj.config.hardware.numCPU:
+            self.configspec.numCPUs = int(self.params['cpu'])
+            self.change_detected = True
+
+        if vm_obj is None or int(self.params['cpu_cores_per_socket']) != vm_obj.config.hardware.numCoresPerSocket:
+            self.configspec.numCoresPerSocket = int(self.params['cpu_cores_per_socket'])
+            self.change_detected = True
+
+        # set memory/etc
+        if 'hardware' in self.params:
             if 'memory_mb' in self.params['hardware']:
                 self.configspec.memoryMB = int(self.params['hardware']['memory_mb'])
                 if vm_obj is None or self.configspec.memoryMB != vm_obj.config.hardware.memoryMB:
@@ -1454,6 +1469,8 @@ def main():
         force=dict(type='bool', default=False),
         datacenter=dict(type='str', default='ha-datacenter'),
         esxi_hostname=dict(type='str'),
+        cpu=dict(required=False, type='int', default=1),
+        cpu_cores_per_socket=dict(required=False, type='int', default=1),
         cluster=dict(type='str'),
         wait_for_ip_address=dict(type='bool', default=False),
         snapshot_src=dict(type='str'),
